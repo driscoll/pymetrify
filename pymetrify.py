@@ -32,6 +32,14 @@ Questions:
 * Is "users" inclusive of users we observe through RT or @ but who didn't author one of the tweets in the collection?
 * We distinguish "tweets with any URLs" from the "unique URLs" in the collection (the latter is always <= the former.) 
 
+Percentiles are ambiguous
+Here's how I am doing it:
+For each percentile supplied by the user, calculate a number of tweets (e.g. for 1000 tweets, if percentiles are (90, 10), then tweet breakdown will be (900, 100))
+Group all users according to the number of tweets they sent
+Sum all of the tweets sent by each group
+Starting with the least-active group, add groups to a cohort until their collective tweets exceeds the number for this percentile
+
+
 Kevin Driscoll, 2013
 
 """
@@ -41,6 +49,8 @@ import datetime
 import fileinput
 import itertools
 import json
+import math
+import operator
 import re
 
 ISOFORMAT = '%Y-%m-%dT%H:%M:%S.000Z'
@@ -67,11 +77,11 @@ class Metrifier:
         self.url = Counter() 
         self.hashtag = Counter()
         self.username = {}
+        self.activity = []
         self.dupes = []
-        self.subset = {}
 
-    def lookup_author_id_str(self, username):
-        return self.username.get(username.lower(), u'-99')
+    def lookup_user_id_str(self, username):
+        return self.username.get(username.lower(), None)
 
     def parse_mentions(self, tweet):
         mentions = tweet.get('twitter_entities', {}).get('user_mentions', [])
@@ -82,10 +92,8 @@ class Metrifier:
                 if not (mention.start(1)-1) in starting_indices:
                     username = mention.group(1)
                     mentions.append({
-                                u'id': -1,
-                                u'id_str' : self.lookup_author_id_str(username),
+                                u'id_str' : self.lookup_user_id_str(username),
                                 u'indices' : [mention.start(1)-1, mention.end(1)],
-                                u'name' : u'',
                                 u'screen_name' : username
                     })
         return mentions
@@ -114,7 +122,7 @@ class Metrifier:
                 rt = {
                     u'edited' : False,
                     u'retweeted_author_username' : retweeted_author_username,
-                    u'retweeted_author_id_str' : self.lookup_author_id_str(retweeted_author_username)
+                    u'retweeted_author_id_str' : self.lookup_user_id_str(retweeted_author_username)
                 }
         # If RT, is there add'l commentary? 
         if rt:
@@ -127,47 +135,60 @@ class Metrifier:
                             rt[u'edited'] = True
         return rt
 
-    def iter(self, key=u'body', start=None, end=None):
+    def group_users_by_activity(self, key=u'tweet', reverse=False, include_id_str=False):
+        for activity, cohort in itertools.groupby(self.iterusers(key=key, reverse=reverse), lambda u: u.get(key, 0)):
+            user = []
+            user_count = 0
+            for u in cohort:
+                if include_id_str:
+                    if not u[u'id_str'] in user:
+                        user.append(u[u'id_str'])
+                user_count += 1
+            count = user_count * activity
+            percent = 100*count/float(self.frequency.get(key, -1))
+            cohort_metrics = {
+                u'key' : key,
+                u'cohort' : activity,
+                u'user_count' : user_count,
+                u'count' : count,
+                u'percent' : percent
+            }
+            if include_id_str:
+                cohort_metrics[u'user'] = user
+            yield cohort_metrics
+
+    def iterusers(self, key=u'id_str', reverse=True, include_inactive=False):
+        """Iterate over all the users observed in this collection. 
+            Only users that have key in their dict keys will be returned.
+        """
+        if include_inactive:
+            activity = list((user.get(key, 0), user[u'id_str']) for user in sorted(self.user.itervalues()))
+        else:
+            activity = list((user.get(key, 0), user[u'id_str']) for user in sorted(self.user.itervalues()) if key in user)
+        activity = sorted(activity, reverse=reverse)
+        for count, id_str in activity:
+            yield self.user[id_str]
+        return 
+
+    def itertweets(self, key=u'body', start=None, end=None):
         if not start:
             start = datetime.datetime.fromtimestamp(0)
         if not end:
             end = datetime.datetime.now()
         condition = lambda tweet: tweet.get(key, False)
         for tweet in itertools.ifilter(condition, (self.tweet[id_str] for id_str in sorted(self.tweet))):
-            if tweet['postedTimeObj'] > end:
+            if tweet[u'postedTimeObj'] > end:
                 break
-            if tweet['postedTimeObj'] >= start:
+            if tweet[u'postedTimeObj'] >= start:
                 yield tweet
         return
-
-    def timeperiods(self, period='hour'):
-        periods = {
-            'year' : 1,
-            'month' : 2,
-            'day' : 3,
-            'hour' : 4,
-            'minute' : 5,
-            'second' : 6
-        }
-        def grouper(tweet):
-            return tweet[u'postedTimeObj'].timetuple()[:periods[period]]
-        print 'Date/time', 'Tweets', 'Users'
-        for key, group in itertools.groupby(self.iter(), key=grouper):
-            # datetime requires at least (year, month, day)
-            while len(key) < 3:
-                key += (1,)
-            self.subset[key] = Metrifier()
-            for tweet in group:
-                self.subset[key].eat(tweet)
-            print datetime.datetime(*key),
-            print self.subset[key].frequency['tweet'],
-            print len(self.subset[key].author)
 
     def chronological(self):
         for id_str in sorted(self.tweet):
             yield self.tweet[id_str]
 
     def eat(self, tweet):
+
         # id_str is our unique key
         id_str = tweet[u'id_str']
         if id_str in self.tweet:
@@ -189,10 +210,12 @@ class Metrifier:
 
         # Increment tweet count for this author
         author_id_str = tweet.get(u'actor', {}).get(u'id_str', '-1')
-        author_username = tweet.get(u'actor', {}).get(u'preferredUsername', u'')
-        self.username[author_username.lower()] = id_str
+        author_username = tweet.get(u'actor', {}).get(u'preferredUsername', u'').lower()
+        self.username[author_username] = author_id_str
         if not author_id_str in self.user:
             self.user[author_id_str] = Counter()
+            self.user[author_id_str][u'id_str'] = author_id_str
+            self.user[author_id_str][u'username'] = author_username
         self.user[author_id_str][u'tweet'] += 1
         self.frequency[u'author'] += 1
 
@@ -206,11 +229,16 @@ class Metrifier:
                 # that we are counting individual @s, 
                 # not just tweets containing >= 1 @s
                 self.user[author_id_str][u'outbound_mention'] += 1
+                self.frequency[u'outbound_mention'] += 1
 
-                self.username[mention[u'screen_name'].lower()] = mention[u'id_str']
+                mention_screen_name = mention[u'screen_name'].lower()
+                self.username[mention_screen_name] = mention[u'id_str']
                 if not mention[u'id_str'] in self.user:
                     self.user[mention[u'id_str']] = Counter()
+                    self.user[mention[u'id_str']][u'id_str'] = mention[u'id_str']
+                    self.user[mention[u'id_str']][u'username'] = mention_screen_name
                 self.user[mention[u'id_str']][u'inbound_mention'] += 1
+                self.frequency[u'inbound_mention'] += 1
 
                 # Is it an @-reply (not visible to all followers)?
                 # (aka, does this mention occur at position 0 in the body?)
@@ -226,9 +254,12 @@ class Metrifier:
             self.frequency[u'is_retweet'] += 1
             self.tweet[id_str][u'is_retweet'] = True
             self.user[author_id_str][u'outbound_retweets'] += 1
-            self.username[rt[u'retweeted_author_username'].lower()] = rt[u'retweeted_author_id_str']
+            retweeted_author_username = rt[u'retweeted_author_username'].lower()
+            self.username[retweeted_author_username] = rt[u'retweeted_author_id_str'] 
             if not rt[u'retweeted_author_id_str'] in self.user:
                 self.user[rt[u'retweeted_author_id_str']] = Counter()
+                self.user[rt[u'retweeted_author_id_str']] = rt[u'retweeted_author_id_str']
+                self.user[rt[u'retweeted_author_username']] = retweeted_author_username
             self.user[rt[u'retweeted_author_id_str']][u'inbound_retweets'] += 1
             # Is it an "edited" or "unedited" retweet?
             if rt[u'edited']:
@@ -251,7 +282,7 @@ class Metrifier:
             self.frequency[u'has_url'] += 1
             self.tweet[id_str][u'has_url'] = True
             for url in urls:
-                self.user[author_id_str][u'shared_url'] += 1
+                self.user[author_id_str][u'has_url'] += 1
                 self.url[url] += 1
 
         # Hashtags?
@@ -260,13 +291,55 @@ class Metrifier:
             self.frequency[u'has_hashtag'] += 1
             self.tweet[id_str][u'has_hashtag'] = True
             for hashtag in hashtags:
-                self.user[author_id_str][u'used_hashtag'] += 1
+                self.user[author_id_str][u'has_hashtag'] += 1
                 self.hashtag[hashtag] += 1
 
             
-            
+def group_users_by_percentile(metrifier, percentiles=(1, 9, 90), include_id_str=False):
 
-def print_time_periods(metrifier, period='hour', separator=SEPARATOR):
+    if not metrifier.frequency:
+        raise ValueError, "This metrifier is hungry and has not eaten any tweets."
+
+    # Percentile refers to a list of users sorted from most active to least
+    if sum(percentiles) > 100:
+        raise ValueError, "Second argument must be a sequence of integers that sum to less than or equal to 100"
+    elif sum(percentiles) < 100:
+        percentiles += (100 - sum(percentiles),)
+
+    percentiles = sorted(percentiles, reverse=True)
+    n = 0
+    cohort = Counter() 
+    cohort[u'user'] = []
+    p = 0
+    boundary = int(math.ceil(percentiles[p]/100.0 * metrifier.frequency[u'tweet']))
+    for group in metrifier.group_users_by_activity(include_id_str=include_id_str):
+        n += group[u'count']
+        cohort[u'activity'] = group.pop('cohort')
+        group.pop('key')
+        cohort.update(group)
+        if include_id_str:
+            for user_id_str in group.get(u'user', []):
+                if not user_id_str in cohort[u'user']:
+                    cohort[u'user'].append(user_id_str)
+        if n > boundary:
+            yield percentiles[p], cohort
+            n = 0 
+            cohort = Counter() 
+            cohort[u'user'] = []
+            p += 1
+            boundary = int(math.ceil(percentiles[p]/100.0 * metrifier.frequency[u'tweet']))
+    # Sometimes we don't reach the last percentile, so we will combine them
+    remaining = reduce(operator.add, percentiles[p:])
+    yield remaining, cohort
+
+
+# OUTPUT functions
+# TODO move this to separate file eventually
+
+def mop(metrifier, period='hour', percentiles=(1,9,90), separator=SEPARATOR):
+
+    output = []
+
     periods = {
         'year' : 1,
         'month' : 2,
@@ -278,21 +351,145 @@ def print_time_periods(metrifier, period='hour', separator=SEPARATOR):
     def grouper(tweet):
         return tweet[u'postedTimeObj'].timetuple()[:periods[period]]
 
-    print SEPARATOR.join(qut_header())
+    print SEPARATOR.join(mop_period_header(metrifier, percentiles))
 
-    for key, group in itertools.groupby(metrifier.iter(), key=grouper):
+    for key, group in itertools.groupby(metrifier.itertweets(), key=grouper):
         # datetime requires at least (year, month, day)
         while len(key) < 3:
             key += (1,)
         subset =  Metrifier()
         for tweet in group:
             subset.eat(tweet)
-        print SEPARATOR.join(map(unicode, qut_row(subset)))
+        print SEPARATOR.join(map(unicode, mop_period_row(subset, percentiles)))
 
-def qut_period_header():
+    print
+    print SEPARATOR.join(mop_percentile_header())
+
+    for row in iter_mop_percentile_rows(metrifier, percentiles):
+        print SEPARATOR.join(map(unicode, row))
+    print SEPARATOR.join(map(unicode, mop_100_percent_row(metrifier)))
+
+    print
+    print SEPARATOR.join(mop_user_header())
+
+    for row in iter_mop_user_rows(metrifier, percentiles):
+        print SEPARATOR.join(map(unicode, row))
+
+def mop_user_header():
+
+    row = [
+        u'user',
+        u'id_str',
+        u'tweets',
+        u'percentile'
+    ]
+    return row
+
+def iter_mop_user_rows(metrifier, percentiles):
+    for percentile, cohort in sorted(list(group_users_by_percentile(metrifier, percentiles, include_id_str=True))):
+        for id_str in sorted(cohort[u'user']):
+            row = [
+                metrifier.user[id_str][u'username'],
+                id_str,
+                metrifier.user[id_str][u'tweet'],
+                percentile
+            ]
+            yield row
+
+def mop_100_percent_row(metrifier):
+    row = [
+        u'All {0} users'.format(metrifier.frequency[u'author']),
+        metrifier.frequency[u'tweet'],
+        1,
+        metrifier.frequency[u'is_original'],
+        100*metrifier.frequency[u'is_original']/float(metrifier.frequency[u'tweet']),
+        metrifier.frequency[u'is_mention'],
+        100*metrifier.frequency[u'is_mention']/float(metrifier.frequency[u'tweet']),
+        metrifier.frequency[u'is_reply'],
+        100*metrifier.frequency[u'is_reply']/float(metrifier.frequency[u'tweet']),
+        metrifier.frequency[u'is_retweet'],
+        100*metrifier.frequency[u'is_retweet']/float(metrifier.frequency[u'tweet']),
+        metrifier.frequency[u'is_unedited_retweet'],
+        100*metrifier.frequency[u'is_unedited_retweet']/float(metrifier.frequency[u'tweet']),
+        metrifier.frequency[u'is_edited_retweet'],
+        100*metrifier.frequency[u'is_edited_retweet']/float(metrifier.frequency[u'tweet']),
+        metrifier.frequency[u'has_url'],
+        100*metrifier.frequency[u'has_url']/float(metrifier.frequency[u'tweet'])
+    ]
+    return row
+
+def iter_mop_percentile_rows(metrifier, percentiles):
+    count = 0
+    for percentile, cohort in sorted(list(group_users_by_percentile(metrifier, percentiles)), reverse=True):
+        row = [
+            u'users {0}% ({1} < tweets <= {2}; {3} of {4} users)'.format(
+                                                            percentile, 
+                                                            count, 
+                                                            cohort[u'activity'],
+                                                            cohort[u'user_count'],
+                                                            len(metrifier.user)
+                                                           ),
+            cohort[u'count'],
+            100*cohort[u'count']/float(metrifier.frequency['tweet'])
+        ]
+        # original tweets
+        row.append(-1)
+        # original tweets:tweets
+        row.append(-1)
+        # @replies
+        row.append(-1)
+        # @replies:tweets
+        row.append(-1)
+        # genuine @replies
+        row.append(-1)
+        # genuine @replies:tweets
+        row.append(-1)
+        # retweets
+        row.append(-1)
+        # retweets:tweets
+        row.append(-1)
+        # unedited retweets
+        row.append(-1)
+        # unedited retweets:tweets
+        row.append(-1)
+        # edited retweets
+        row.append(-1)
+        # edited retweets:tweets
+        row.append(-1)
+        # URLs
+        row.append(-1)
+        # URLs:tweets
+        row.append(-1)
+        yield row
+        count = cohort[u'activity']
+
+
+def mop_percentile_header():
+    row = [
+        u'percentile',
+        u'tweets',
+        u'tweets:total tweets',
+        u'original tweets',
+        u'original tweets:tweets',
+        u'@replies',
+        u'@replies:tweets',
+        u'genuine @replies',
+        u'genuine @replies:tweets',
+        u'retweets',
+        u'retweets:tweets',
+        u'unedited retweets',
+        u'unedited retweets:tweets',
+        u'edited retweets',
+        u'edited retweets:tweets',
+        u'URLs',
+        u'URLs:tweets'
+    ]
+    return row
+
+def mop_period_header(metrifier, percentiles):
     """Returns a sequence of strings corresponding to the column headers 
         at the top of the default output from metrify.awk"""
-    return (
+    row = [
         u'first',
         u'last',
         u'tweets',
@@ -316,146 +513,121 @@ def qut_period_header():
         u'% retweets',
         u'% unedited retweets',
         u'% edited retweets',
-        u'% URLs',
-        u'number of current users from least active 25% (< 1 tweets)',
-        u'% of current users from least active 25% (< 1 tweets)',
-        u'number of tweets from least active 25% (< 1 tweets)',
-        u'% of tweets from least active 25% (< 1 tweets)',
-        u'number of current users from > 25% group (> 0 tweets; 1 of 999 users)',
-        u'% of current users from > 25% group (> 0 tweets; 1 of 999 users)',
-        u'tweets from > 25% group (> 0 tweets; 1 of 999 users)',
-        u'% of tweets from > 25% group (> 0 tweets; 1 of 999 users)',
-        u'number of current users from > 50% group (> 0 tweets; 1 of 999 users)',
-        u'% of current users from > 50% group (> 0 tweets; 1 of 999 users)',
-        u'tweets from > 50% group (> 0 tweets; 1 of 999 users)',
-        u'% of tweets from > 50% group (> 0 tweets; 1 of 999 users)',
-        u'number of current users from > 75% group (> 0 tweets; 997 of 999 users)',
-        u'% of current users from > 75% group (> 0 tweets; 997 of 999 users)',
-        u'tweets from > 75% group (> 0 tweets; 997 of 999 users)',
-        u'% of tweets from > 75% group (> 0 tweets; 997 of 999 users)'
-    )
+        u'% URLs'
+    ]
+    count = 0
+    for percentile, cohort in sorted(list(group_users_by_percentile(metrifier, percentiles)), reverse=True):
+        row.extend([
+            u'number of current users from {0}% ({1} < tweets <= {2})'.format(percentile, count, cohort[u'activity']),
+            u'% of current users from {0}% ({1} < tweets <= {2})'.format(percentile, count, cohort[u'activity']),
+            u'number of tweets from {0}% ({1} < tweets <= {2})'.format(percentile, count, cohort[u'activity']),
+            u'% of tweets from least {0}% ({1} < tweets <= {2})'.format(percentile, count, cohort[u'activity'])
+        ])
+        count = cohort[u'activity']
+    return row
 
 
-def qut_period_row(metrifier):
+def mop_period_row(metrifier, percentiles):
     """Returns a sequence of numbers corresponding to the columns at the top
         of the default output from metrify.awk"""
 
     if not metrifier.frequency:
-        sys.stderr.write('This metrifier has not eaten any tweets.')
-        sys.stderr.write('\n')
-        return tuple()
+        raise ValueError, "This metrifier has not eaten any tweets."
+
+    row = []
+
+    # Time boundaries
+    row.append(metrifier.timebounds['first'])
+    row.append(metrifier.timebounds['last'])
 
     # Tweets collected
-    tweets = metrifier.frequency['tweet']
+    tweets = metrifier.frequency[u'tweet']
+    row.append(tweets)
 
     # Unique users who sent >= 1 tweet
-    authors = metrifier.frequency['author']
+    authors = metrifier.frequency[u'author']
+    row.append(authors)
 
     # Ratio of tweets to users
-    tweets_user = tweets / float(authors)
+    row.append(tweets / float(authors))
 
     # Ratio of original tweets to users
-    original_tweets_user = metrifier.frequency['is_original'] / float(authors)
+    row.append(metrifier.frequency[u'is_original'] / float(authors))
 
     # Ratio of retweets (any kind) to users
-    rt_user = metrifier.frequency['is_retweet'] / float(authors)
+    row.append(metrifier.frequency[u'is_retweet'] / float(authors))
 
     # Ratio of unedited RT to users
-    rt_unedited_user = metrifier.frequency['is_unedited_retweet'] / float(authors)
+    row.append(metrifier.frequency[u'is_unedited_retweet'] / float(authors))
 
     # Ratio of edited RT to users
-    rt_edited_user = metrifier.frequency['is_edited_retweet'] / float(authors)
+    row.append(metrifier.frequency[u'is_edited_retweet'] / float(authors))
 
     # Ratio of @-replies (as opposed to mentions) to users
-    replies_user = metrifier.frequency['is_reply'] / float(authors)
+    row.append(metrifier.frequency[u'is_reply'] / float(authors))
     
     # Ratio of URLs to users
-    urls_user = metrifier.frequency['has_url'] / float(authors)
+    row.append(metrifier.frequency[u'has_url'] / float(authors))
 
     # Ratio of authors who sent >= 1 tweet to tweets
-    users_tweets = metrifier.frequency['author'] / float(authors)
+    row.append(metrifier.frequency[u'author'] / float(authors))
 
     # Original tweets
-    original = metrifier.frequency['is_original']
+    original = metrifier.frequency[u'is_original']
+    row.append(original)
 
     # @-replies (as opposed to mentions)
-    replies = metrifier.frequency['is_reply']
+    replies = metrifier.frequency[u'is_reply']
+    row.append(replies)
 
     # Retweets of any kind
-    rt = metrifier.frequency['is_retweet']
+    rt = metrifier.frequency[u'is_retweet']
+    row.append(rt)
 
     # Unedited RTs
-    rt_unedited = metrifier.frequency['is_unedited_retweet']
-    
+    rt_unedited = metrifier.frequency[u'is_unedited_retweet']
+    row.append(rt_unedited)
+
     # Edited RTs
-    rt_edited = metrifier.frequency['is_edited_retweet']
+    rt_edited = metrifier.frequency[u'is_edited_retweet']
+    row.append(rt_edited)
     
     # Unique URLs
     urls = len(metrifier.url)
+    row.append(urls)
 
     # % original tweets
-    original_tweets = original / float(tweets)
+    row.append(original / float(tweets))
 
     # % genuine @replies
-    replies_tweets = replies / float(tweets)
+    row.append(replies / float(tweets))
 
     # % retweets
-    rt_tweets = rt / float(tweets)
+    row.append(rt / float(tweets))
 
     # % unedited retweets
-    rt_unedited_tweets = rt_unedited / float(tweets)
+    row.append(rt_unedited / float(tweets))
 
     # % edited retweets
-    rt_edited_tweets = rt_edited / float(tweets)
+    row.append(rt_edited / float(tweets))
 
-    # % URLs
-    urls_tweets = metrifier.frequency['has_url'] / float(tweets)
+    # % of tweets with any URLs
+    row.append(metrifier.frequency[u'has_url'] / float(tweets))
 
-    # number of current users from least active 25% (< 1 tweets)
-% of current users from least active 25% (< 1 tweets)
-number of tweets from least active 25% (< 1 tweets)
-% of tweets from least active 25% (< 1 tweets)
-number of current users from > 25% group (> 0 tweets; 1 of 999 users)
-% of current users from > 25% group (> 0 tweets; 1 of 999 users)
-tweets from > 25% group (> 0 tweets; 1 of 999 users)
-% of tweets from > 25% group (> 0 tweets; 1 of 999 users)
-number of current users from > 50% group (> 0 tweets; 1 of 999 users)
-% of current users from > 50% group (> 0 tweets; 1 of 999 users)
-tweets from > 50% group (> 0 tweets; 1 of 999 users)
-% of tweets from > 50% group (> 0 tweets; 1 of 999 users)
-number of current users from > 75% group (> 0 tweets; 997 of 999 users)
-% of current users from > 75% group (> 0 tweets; 997 of 999 users)
-tweets from > 75% group (> 0 tweets; 997 of 999 users)
-% of tweets from > 75% group (> 0 tweets; 997 of 999 users)
-"""
+    for percentile, cohort in sorted(list(group_users_by_percentile(metrifier, percentiles))):
+        # number of current users _% (_ < tweets <= _)
+        row.append(cohort[u'user_count'])
+        
+        # % of current users _% (_ < tweets <= _)
+        row.append(100*cohort[u'user_count']/float(authors))
 
+        # number of tweets _% (_ < tweets <= _)
+        row.append(cohort[u'count'])
 
-    return (
-                metrifier.timebounds[u'first'],
-                metrifier.timebounds[u'last'],
-    			tweets,
-    			authors,
-    			tweets_user,
-    			original_tweets_user,
-    			rt_user,
-    			rt_unedited_user,
-    			rt_edited_user,
-    			replies_user,
-    			urls_user,
-    			users_tweets,
-    			original,
-    			replies,
-    			rt,
-    			rt_unedited,
-    			rt_edited,
-    			urls,
-    			original_tweets,
-    			replies_tweets,
-    			rt_tweets,
-    			rt_unedited_tweets,
-    			rt_edited_tweets,
-    			urls_tweets
-           )
+        # % of tweets _% (_ < tweets <= _)
+        row.append(100*cohort[u'count']/float(tweets))
+
+    return row
 
 
 if __name__ == "__main__":
@@ -465,6 +637,9 @@ if __name__ == "__main__":
     for line in fileinput.input():
         tweet = json.loads(line)
         metrifier.eat(tweet)
+
+    mop(metrifier)
+
 
    
 
