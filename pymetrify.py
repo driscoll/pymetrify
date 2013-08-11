@@ -18,6 +18,8 @@ Test on larger data set (with share verbs and vias)
 Command line options
 Conform output to match metrify.awk EXACTLY
 
+Adjust singular/plural key names
+
 networkx or igraph?
     @-mention network (weighted, directional with @-replies being stronger)
     RT-network (weighted, directional)
@@ -38,6 +40,7 @@ For each percentile supplied by the user, calculate a number of tweets (e.g. for
 Group all users according to the number of tweets they sent
 Sum all of the tweets sent by each group
 Starting with the least-active group, add groups to a cohort until their collective tweets exceeds the number for this percentile
+
 
 
 Kevin Driscoll, 2013
@@ -275,6 +278,7 @@ class Metrifier:
         else:
             self.frequency[u'is_original'] += 1
             self.tweet[id_str][u'is_original'] = True
+            self.user[author_id_str][u'is_original'] +=1
 
         # URLs?
         urls = self.parse_urls(tweet)
@@ -336,7 +340,7 @@ def group_users_by_percentile(metrifier, percentiles=(1, 9, 90), include_id_str=
 # OUTPUT functions
 # TODO move this to separate file eventually
 
-def mop(metrifier, period='hour', percentiles=(1,9,90), separator=SEPARATOR):
+def mop(metrifier, period='hour', percentiles=(1,9,90), separator=SEPARATOR, skipusers=False):
 
     output = []
 
@@ -370,30 +374,120 @@ def mop(metrifier, period='hour', percentiles=(1,9,90), separator=SEPARATOR):
     print SEPARATOR.join(map(unicode, mop_100_percent_row(metrifier)))
 
     print
-    print SEPARATOR.join(mop_user_header())
+    print SEPARATOR.join(mop_user_header(skipusers))
 
-    for row in iter_mop_user_rows(metrifier, percentiles):
+    for row in iter_mop_user_rows(metrifier, percentiles, skipusers):
         print SEPARATOR.join(map(unicode, row))
 
-def mop_user_header():
+def mop_user_header(skipusers=False):
 
     row = [
         u'user',
         u'id_str',
-        u'tweets',
-        u'percentile'
+        u'percentile',
+        u'tweets'
     ]
+    if not skipusers:
+        row.extend([
+            "original tweets",
+            "% original",
+            "outbound @-mentions",
+            "% outbound @-mentions",
+            "outbound @-replies",
+            "% outbound @-replies",
+            "outbound retweets",
+            "% outbound retweets",
+            "outbound unedited retweets",
+            "% outbound unedited retweets",
+            "outbound edited retweets",
+            "% outbound edited retweets",
+            "tweets with URLs",
+            "% tweets with URLs",
+            "tweets with >= 1 hashtags",
+            "% tweets with >= 1 hashtags",
+            "inbound @-mentions",
+            "inbound @-mentions:outbound tweets",
+            "inbound @-replies",
+            "% of inbound mentions are replies",
+            "inbound @-replies:outbound tweets",
+            "inbound retweets",
+            "inbound retweets:outbound tweets",
+            "inbound unedited retweets",
+            "% inbound unedited retweets",
+            "inbound unedited retweets:outbound tweets",
+            "inbound edited retweets",
+            "% inbound edited retweets",
+            "inbound edited retweets:outbound tweets"
+        ])
     return row
 
-def iter_mop_user_rows(metrifier, percentiles):
+def iter_mop_user_rows(metrifier, percentiles, skipusers=False):
+    def ratio(s, n):
+        if not s:
+            return 0
+        if not n:
+            return -1
+        return (100 * s / float(n))
+    def percent(s, n):
+        if not s:
+            return 0
+        if not n:
+            return -1
+        return (100 * s / float(n))
     for percentile, cohort in sorted(list(group_users_by_percentile(metrifier, percentiles, include_id_str=True))):
         for id_str in sorted(cohort[u'user']):
             row = [
                 metrifier.user[id_str][u'username'],
                 id_str,
-                metrifier.user[id_str][u'tweet'],
-                percentile
+                percentile,
+                metrifier.user[id_str][u'tweet']
             ]
+            if not skipusers:
+                tweets = metrifier.user[id_str].get(u'tweet', 0)
+                original_tweets = metrifier.user[id_str].get(u'is_original', 0)
+                outbound_mentions = metrifier.user[id_str].get(u'outbound_mention', 0)
+                outbound_replies = metrifier.user[id_str].get(u'outbound_replies', 0)
+                outbound_retweets = metrifier.user[id_str].get(u'outbound_retweets', 0)
+                outbound_unedited_retweets = metrifier.user[id_str].get(u'outbound_unedited_retweets', 0)
+                outbound_edited_retweets = metrifier.user[id_str].get(u'outbound_edited_retweets', 0)
+                inbound_mentions = metrifier.user[id_str].get(u'inbound_mention', 0)
+                inbound_replies = metrifier.user[id_str].get(u'inbound_replies', 0)
+                inbound_retweets = metrifier.user[id_str].get(u'inbound_retweets', 0)
+                inbound_unedited_retweets = metrifier.user[id_str].get(u'inbound_unedited_retweets', 0)
+                inbound_edited_retweets = metrifier.user[id_str].get(u'inbound_edited_retweets', 0)
+                has_url = metrifier.user[id_str].get(u'has_url', 0)
+                has_hashtag = metrifier.user[id_str].get(u'has_hashtag', 0)
+                row.extend([
+                    original_tweets,
+                    percent(original_tweets, tweets),
+                    outbound_mentions,
+                    percent(outbound_mentions, tweets),
+                    outbound_replies,
+                    percent(outbound_replies, tweets),
+                    outbound_retweets,
+                    percent(outbound_retweets, tweets),
+                    outbound_unedited_retweets,
+                    percent(outbound_unedited_retweets, tweets),
+                    outbound_edited_retweets,
+                    percent(outbound_edited_retweets, tweets),
+                    has_url,
+                    percent(has_url, tweets),
+                    has_hashtag,
+                    percent(has_hashtag, tweets),
+                    inbound_mentions,
+                    ratio(inbound_mentions, tweets),
+                    inbound_replies,
+                    percent(inbound_replies, inbound_mentions),
+                    ratio(inbound_replies, tweets),
+                    inbound_retweets,
+                    ratio(inbound_retweets, tweets),
+                    inbound_unedited_retweets,
+                    percent(inbound_unedited_retweets, inbound_retweets),
+                    ratio(inbound_unedited_retweets, tweets),
+                    inbound_edited_retweets,
+                    percent(inbound_edited_retweets, inbound_retweets),
+                    ratio(inbound_edited_retweets, tweets),
+                ])
             yield row
 
 def mop_100_percent_row(metrifier):
