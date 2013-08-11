@@ -6,17 +6,11 @@ Port of metrify.awk
 
 TODO 
 
-Write a method to output one of the top rows of the awk output
-Then make the timeperiods method spit out those rows
-
-If methods don't use self, they should be outside of the Metrifier class
-
-Implement percentiles
+Implement percentile stats
 
 Test on larger data set (with share verbs and vias)
 
 Command line options
-Conform output to match metrify.awk EXACTLY
 
 Adjust singular/plural key names
 
@@ -24,15 +18,16 @@ networkx or igraph?
     @-mention network (weighted, directional with @-replies being stronger)
     RT-network (weighted, directional)
     user-url 2-mode network
+
 Write up differences between this approach and the original metrify.awk
     We say "mention" and "reply", they say "@-reply" and "genuine @-reply"
+    We distinguish "tweets with any URLs/hashtags" from "unique urls/hashtags" in the collection (the latter is always <= the former.) 
 
 Questions:
 * Queensland counts RTs as a subset of @-mentions -- non obvious
 * Do we count @s in RTs the same as other @s?
 * Do we count EACH @ in a tweet or just tweets-containing-an-@?
 * Is "users" inclusive of users we observe through RT or @ but who didn't author one of the tweets in the collection?
-* We distinguish "tweets with any URLs" from the "unique URLs" in the collection (the latter is always <= the former.) 
 
 Percentiles are ambiguous
 Here's how I am doing it:
@@ -77,6 +72,7 @@ class Metrifier:
         self.tweet = {} 
         self.frequency = Counter()
         self.user = {}
+        self.user_tweet = defaultdict(list) 
         self.url = Counter() 
         self.hashtag = Counter()
         self.username = {}
@@ -220,6 +216,7 @@ class Metrifier:
             self.user[author_id_str][u'id_str'] = author_id_str
             self.user[author_id_str][u'username'] = author_username
         self.user[author_id_str][u'tweet'] += 1
+        self.user_tweet[author_id_str].append(id_str)
         self.frequency[u'author'] += 1
 
         # Does the text include one or more @-mentions?
@@ -299,7 +296,7 @@ class Metrifier:
                 self.hashtag[hashtag] += 1
 
             
-def group_users_by_percentile(metrifier, percentiles=(1, 9, 90), include_id_str=False):
+def group_users_by_percentile(metrifier, percentiles=(1, 9, 90), include_id_str=False, include_tweets=False):
 
     if not metrifier.frequency:
         raise ValueError, "This metrifier is hungry and has not eaten any tweets."
@@ -326,7 +323,13 @@ def group_users_by_percentile(metrifier, percentiles=(1, 9, 90), include_id_str=
                 if not user_id_str in cohort[u'user']:
                     cohort[u'user'].append(user_id_str)
         if n > boundary:
-            yield percentiles[p], cohort
+            if include_tweets:
+                tweets = []
+                for author_id_str in cohort[u'user']:
+                    tweets.extend(meterifier.user_tweet[author_id_str])
+                yield percentiles[p], cohort, tweets
+            else:
+                yield percentiles[p], cohort
             n = 0 
             cohort = Counter() 
             cohort[u'user'] = []
@@ -334,11 +337,22 @@ def group_users_by_percentile(metrifier, percentiles=(1, 9, 90), include_id_str=
             boundary = int(math.ceil(percentiles[p]/100.0 * metrifier.frequency[u'tweet']))
     # Sometimes we don't reach the last percentile, so we will combine them
     remaining = reduce(operator.add, percentiles[p:])
-    yield remaining, cohort
+    if include_tweets:
+        tweets = []
+        for author_id_str in cohort[u'user']:
+            # TODO figure out why this is returning an empty list
+            tweets.extend(meterifier.user_tweet[author_id_str])
+        yield remaining, cohort, tweets
+    else:
+        yield remaining, cohort
 
 
+##################################################################
+#
 # OUTPUT functions
 # TODO move this to separate file eventually
+#
+#
 
 def mop(metrifier, period='hour', percentiles=(1,9,90), separator=SEPARATOR, skipusers=False):
 
@@ -514,7 +528,10 @@ def mop_100_percent_row(metrifier):
 
 def iter_mop_percentile_rows(metrifier, percentiles):
     count = 0
-    for percentile, cohort in sorted(list(group_users_by_percentile(metrifier, percentiles)), reverse=True):
+    for percentile, cohort, tweets in sorted(list(group_users_by_percentile(metrifier, percentiles, include_tweets=True)), reverse=True):
+        subset = Metrifier()
+        for tweet_id_str in tweets:
+            subset.eat(metrifier.tweet[tweet_id_str])
         row = [
             u'users {0}% ({1} < tweets <= {2}; {3} of {4} users)'.format(
                                                             percentile, 
