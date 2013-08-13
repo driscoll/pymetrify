@@ -57,6 +57,16 @@ SEPARATOR = u','
 def from_postedTime(postedTime):
     return datetime.datetime.strptime(postedTime, ISOFORMAT)
 
+def ratio(n, m):
+    if not n:
+        return 0
+    if not m:
+        return -1
+    return (n / float(m))
+
+def percent(n, m):
+    return (100 * ratio(n, m))
+
 class Metrifier:
 
     re_mention = re.compile(r'@([A-Za-z0-9_]+)')
@@ -144,13 +154,13 @@ class Metrifier:
                         user.append(u[u'id_str'])
                 user_count += 1
             count = user_count * activity
-            percent = 100*count/float(self.frequency.get(key, -1))
+            per_cent = percent(count, self.frequency.get(key, -1))
             cohort_metrics = {
                 u'key' : key,
                 u'cohort' : activity,
                 u'user_count' : user_count,
                 u'count' : count,
-                u'percent' : percent
+                u'percent' : per_cent
             }
             if include_id_str:
                 cohort_metrics[u'user'] = user
@@ -215,9 +225,9 @@ class Metrifier:
             self.user[author_id_str] = Counter()
             self.user[author_id_str][u'id_str'] = author_id_str
             self.user[author_id_str][u'username'] = author_username
+            self.frequency[u'author'] += 1
         self.user[author_id_str][u'tweet'] += 1
         self.user_tweet[author_id_str].append(id_str)
-        self.frequency[u'author'] += 1
 
         # Does the text include one or more @-mentions?
         mentions = self.parse_mentions(tweet)
@@ -326,7 +336,7 @@ def group_users_by_percentile(metrifier, percentiles=(1, 9, 90), include_id_str=
             if include_tweets:
                 tweets = []
                 for author_id_str in cohort[u'user']:
-                    tweets.extend(meterifier.user_tweet[author_id_str])
+                    tweets.extend(metrifier.user_tweet[author_id_str])
                 yield percentiles[p], cohort, tweets
             else:
                 yield percentiles[p], cohort
@@ -340,8 +350,7 @@ def group_users_by_percentile(metrifier, percentiles=(1, 9, 90), include_id_str=
     if include_tweets:
         tweets = []
         for author_id_str in cohort[u'user']:
-            # TODO figure out why this is returning an empty list
-            tweets.extend(meterifier.user_tweet[author_id_str])
+            tweets.extend(metrifier.user_tweet[author_id_str])
         yield remaining, cohort, tweets
     else:
         yield remaining, cohort
@@ -436,18 +445,6 @@ def mop_user_header(skipusers=False):
     return row
 
 def iter_mop_user_rows(metrifier, percentiles, skipusers=False):
-    def ratio(s, n):
-        if not s:
-            return 0
-        if not n:
-            return -1
-        return (100 * s / float(n))
-    def percent(s, n):
-        if not s:
-            return 0
-        if not n:
-            return -1
-        return (100 * s / float(n))
     for percentile, cohort in sorted(list(group_users_by_percentile(metrifier, percentiles, include_id_str=True))):
         for id_str in sorted(cohort[u'user']):
             row = [
@@ -504,75 +501,85 @@ def iter_mop_user_rows(metrifier, percentiles, skipusers=False):
                 ])
             yield row
 
-def mop_100_percent_row(metrifier):
-    row = [
-        u'All {0} users'.format(metrifier.frequency[u'author']),
-        metrifier.frequency[u'tweet'],
-        1,
-        metrifier.frequency[u'is_original'],
-        100*metrifier.frequency[u'is_original']/float(metrifier.frequency[u'tweet']),
-        metrifier.frequency[u'is_mention'],
-        100*metrifier.frequency[u'is_mention']/float(metrifier.frequency[u'tweet']),
-        metrifier.frequency[u'is_reply'],
-        100*metrifier.frequency[u'is_reply']/float(metrifier.frequency[u'tweet']),
-        metrifier.frequency[u'is_retweet'],
-        100*metrifier.frequency[u'is_retweet']/float(metrifier.frequency[u'tweet']),
-        metrifier.frequency[u'is_unedited_retweet'],
-        100*metrifier.frequency[u'is_unedited_retweet']/float(metrifier.frequency[u'tweet']),
-        metrifier.frequency[u'is_edited_retweet'],
-        100*metrifier.frequency[u'is_edited_retweet']/float(metrifier.frequency[u'tweet']),
-        metrifier.frequency[u'has_url'],
-        100*metrifier.frequency[u'has_url']/float(metrifier.frequency[u'tweet'])
+def mop_percentile_row(metrifier, label, total_tweets):
+    tweets = metrifier.frequency.get(u'tweet', 0)
+    original = metrifier.frequency.get(u'is_original', 0)
+    mentions = metrifier.frequency.get(u'is_mention', 0)
+    replies = metrifier.frequency.get(u'is_reply', 0)
+    retweets = metrifier.frequency.get(u'is_retweet', 0)
+    unedited_rt = metrifier.frequency.get(u'is_unedited_retweet', 0)
+    edited_rt = metrifier.frequency.get(u'is_edited_retweet', 0)
+    has_url = metrifier.frequency.get(u'has_url', 0)
+    return [
+        label,
+        tweets, 
+        percent(tweets, total_tweets),
+        original,
+        ratio(original, tweets),
+        mentions,
+        ratio(mentions, tweets),
+        replies,
+        ratio(replies, tweets),
+        retweets,
+        ratio(retweets, tweets),
+        unedited_rt,
+        ratio(unedited_rt, tweets),
+        edited_rt,
+        ratio(edited_rt, tweets),
+        has_url,
+        ratio(has_url, tweets)
     ]
-    return row
+
+def mop_100_percent_row(metrifier):
+    label = u'All {0} users'.format(metrifier.frequency[u'author'])
+    total_tweets = metrifier.frequency.get(u'tweet', 0)
+    return mop_percentile_row(metrifier, label, total_tweets)
 
 def iter_mop_percentile_rows(metrifier, percentiles):
-    count = 0
-    for percentile, cohort, tweets in sorted(list(group_users_by_percentile(metrifier, percentiles, include_tweets=True)), reverse=True):
+    lower_bound = 0
+    total_tweets = metrifier.frequency.get(u'tweet', 0)
+    for percentile, cohort, tweets in sorted(list(group_users_by_percentile(metrifier, percentiles, include_id_str=True, include_tweets=True)), reverse=True):
         subset = Metrifier()
         for tweet_id_str in tweets:
             subset.eat(metrifier.tweet[tweet_id_str])
+        label = u'users {0}% ({1} < tweets <= {2}; {3} of {4} users)'.format(
+                                                                        percentile, 
+                                                                        lower_bound, 
+                                                                        cohort[u'activity'],
+                                                                        cohort[u'user_count'],
+                                                                        len(metrifier.user)
+                                                                       )
+        yield mop_percentile_row(subset, label, total_tweets)
+
+"""
         row = [
             u'users {0}% ({1} < tweets <= {2}; {3} of {4} users)'.format(
                                                             percentile, 
-                                                            count, 
+                                                            lower_bound, 
                                                             cohort[u'activity'],
                                                             cohort[u'user_count'],
                                                             len(metrifier.user)
                                                            ),
-            cohort[u'count'],
-            100*cohort[u'count']/float(metrifier.frequency['tweet'])
+            tweets, # cohort[u'count'],
+            percent(tweets, total_tweets),
+            original,
+            ratio(original, tweets),
+            mentions,
+            ratio(mentions, tweets),
+            replies,
+            ratio(replies, tweets),
+            retweets,
+            ratio(retweets, tweets),
+            unedited_rt,
+            ratio(unedited_rt, tweets),
+            edited_rt,
+            ratio(edited_rt, tweets),
+            has_url,
+            ratio(has_url, tweets)
         ]
-        # original tweets
-        row.append(-1)
-        # original tweets:tweets
-        row.append(-1)
-        # @replies
-        row.append(-1)
-        # @replies:tweets
-        row.append(-1)
-        # genuine @replies
-        row.append(-1)
-        # genuine @replies:tweets
-        row.append(-1)
-        # retweets
-        row.append(-1)
-        # retweets:tweets
-        row.append(-1)
-        # unedited retweets
-        row.append(-1)
-        # unedited retweets:tweets
-        row.append(-1)
-        # edited retweets
-        row.append(-1)
-        # edited retweets:tweets
-        row.append(-1)
-        # URLs
-        row.append(-1)
-        # URLs:tweets
-        row.append(-1)
         yield row
-        count = cohort[u'activity']
+        lower_bound += cohort[u'activity']
+"""
 
 
 def mop_percentile_header():
@@ -660,28 +667,28 @@ def mop_period_row(metrifier, percentiles):
     row.append(authors)
 
     # Ratio of tweets to users
-    row.append(tweets / float(authors))
+    row.append(ratio(tweets, authors))
 
     # Ratio of original tweets to users
-    row.append(metrifier.frequency[u'is_original'] / float(authors))
+    row.append(ratio(metrifier.frequency[u'is_original'], authors))
 
     # Ratio of retweets (any kind) to users
-    row.append(metrifier.frequency[u'is_retweet'] / float(authors))
+    row.append(ratio(metrifier.frequency[u'is_retweet'], authors))
 
     # Ratio of unedited RT to users
-    row.append(metrifier.frequency[u'is_unedited_retweet'] / float(authors))
+    row.append(ratio(metrifier.frequency[u'is_unedited_retweet'], authors))
 
     # Ratio of edited RT to users
-    row.append(metrifier.frequency[u'is_edited_retweet'] / float(authors))
+    row.append(ratio(metrifier.frequency[u'is_edited_retweet'], authors))
 
     # Ratio of @-replies (as opposed to mentions) to users
-    row.append(metrifier.frequency[u'is_reply'] / float(authors))
+    row.append(ratio(metrifier.frequency[u'is_reply'], authors))
     
     # Ratio of URLs to users
-    row.append(metrifier.frequency[u'has_url'] / float(authors))
+    row.append(ratio(metrifier.frequency[u'has_url'], authors))
 
     # Ratio of authors who sent >= 1 tweet to tweets
-    row.append(metrifier.frequency[u'author'] / float(authors))
+    row.append(ratio(metrifier.frequency[u'author'], authors))
 
     # Original tweets
     original = metrifier.frequency[u'is_original']
@@ -723,20 +730,20 @@ def mop_period_row(metrifier, percentiles):
     row.append(rt_edited / float(tweets))
 
     # % of tweets with any URLs
-    row.append(metrifier.frequency[u'has_url'] / float(tweets))
+    row.append(ratio(metrifier.frequency[u'has_url'], tweets))
 
     for percentile, cohort in sorted(list(group_users_by_percentile(metrifier, percentiles))):
         # number of current users _% (_ < tweets <= _)
         row.append(cohort[u'user_count'])
         
         # % of current users _% (_ < tweets <= _)
-        row.append(100*cohort[u'user_count']/float(authors))
+        row.append(percent(cohort[u'user_count'], authors))
 
         # number of tweets _% (_ < tweets <= _)
         row.append(cohort[u'count'])
 
         # % of tweets _% (_ < tweets <= _)
-        row.append(100*cohort[u'count']/float(tweets))
+        row.append(percent(cohort[u'count'], tweets))
 
     return row
 
