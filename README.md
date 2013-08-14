@@ -185,6 +185,7 @@ Retweets are ambiguous if they use "via @username"
 * The RT parser starts with pre-parsed RT data via Gnip's use of the Activity Streams "share" verb, then checks with a regex for "MT @username", "RT @username", or "via @username" 
 * Distinguishing "edited" from "unedited" retweets is a step in the right direction
 * Currently PyMetrify marks "via @username" as a RT but there's a semantic problem -- this may be a RT or a citation to a website, depending on the sending app:
+
 > (Tweetbot for iOS) Woohooo! Romney will have Ahmadinejad indicted for genocide! YES (via @HeyTammyBruce) BALLS! Love it!
 > (Tweet Button) Romney education policies were 'inconsequential' http://t.co/Yhw2SHQG via @thinkprogress #debate
 > (web) If we get Romney in office for 4yrs, then we will have to put up with the same things we did when Bush was in office. (via @JaYiZmEe )
@@ -192,14 +193,14 @@ Retweets are ambiguous if they use "via @username"
 
 ## Known issues
 
-[ ] The report() function is very inefficient and not appropriate for large collections. 
-[ ] How should we handle "orphaned" usernames who do not have an id_str?
-
 > "Premature optimization is the root of all evil" -- Donald Knuth, 1974
+
+* [] The report() function is very inefficient and not appropriate for large collections. 
+* [] How should we handle "orphaned" usernames who do not have an id_str?
 
 ## Acknowledgements
 
-The project began as a port of metrify.awk version 1.2 which was written by Axel Bruns and [published in 2012](http://mappingonlinepublics.net/2012/01/31/more-twitter-metrics-metrify-revisited/) on [Mapping Online Publics](http://mappingonlinepublics.net) under a [Creative Commons BY-NC-SA](http://creativecommons.org/licenses/by-nc-sa/2.0/) license.
+This project began as a port of metrify.awk version 1.2 which was written by [Axel Bruns](http://snurb.info/) and [published in 2012](http://mappingonlinepublics.net/2012/01/31/more-twitter-metrics-metrify-revisited/) on [Mapping Online Publics](http://mappingonlinepublics.net) under a [Creative Commons BY-NC-SA](http://creativecommons.org/licenses/by-nc-sa/2.0/) license.
 
 PyMetrify was written by [Kevin Driscoll](http://kevindriscoll.info/) and published in 2013 under the [GNU General Public License, version 3](http://www.gnu.org/licenses/gpl.html). Following the [advice of Creative Commons](http://creativecommons.org/software), GPLv3 was chosen because it is consistent with the spirit of the original metrify.awk license. Plus, research software should be free for scholars to learn from, teach with, modify, and pass on.
 
