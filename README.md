@@ -1,11 +1,13 @@
 PyMetrify
 =========
 
-PyMetrify is a metrics tool for researchers who are handling small- to medium-sized collections of tweets. Inspired by [metrify.awk](http://mappingonlinepublics.net/2012/01/31/more-twitter-metrics-metrify-revisited/), PyMetrify calculates common descriptive statistics and includes a set of output functions to produce a human-readable report. PyMetrify is designed to be easy for beginning programmers to use and intermediate programmers to modify. 
+PyMetrify is a tool for researchers who are handling small- to medium-sized collections of tweets in Activity Streams format. Inspired by [metrify.awk](http://mappingonlinepublics.net/2012/01/31/more-twitter-metrics-metrify-revisited/), the Metrifier class generates common descriptive statistics and the report() function produces a nice, human-readable report. 
+
+PyMetrify is designed to be easy for beginning programmers to use and modify. Please don't hesitate to get in touch!
 
 ## Quick start
 
-Here is a simple script for ingesting tweets and producing a report:
+Here is a simple script for ingesting tweets from a file and printing a report:
 ```python
 import json
 import pymetrify
@@ -166,9 +168,32 @@ For each user, this report includes the following counts, ratios, and percentage
 * inbound edited retweets % inbound edited retweets
 * inbound edited retweets:outbound tweets
 
+## Ambiguities and open questions
+
+* In PyMetrify output, "@-mention" and "@-reply" correspond to "@-reply" and "genuine @-reply" in metrify.awk and other tools.
+* "Tweets with any URLs/hashtags" are distinguished from "unique urls/hashtags" in the collection (the latter is always less than or equal to the former) 
+* "Mentions" are a superset of "retweets"
+* The "@-mentions" count includes _each_ @-mention, not just tweets containing any number of @-mentions.
+* "Users" includes all users (even if they only appear in an @-mention or retweet); "authors" is the subset of users who sent 1 or more outbound tweets
+
+Mentions are a generally ambiguous category
+* Users are identified by a unique numeric ID 
+* Users can and do change their username as often as they like 
+* In rare cases, PyMetrify identifies a username that Twitter's parser missed which means that the user data is assigned to an empty ID
+
+Retweets are ambiguous if they use "via @username"
+* The RT parser starts with pre-parsed RT data via Gnip's use of the Activity Streams "share" verb, then checks with a regex for "MT @username", "RT @username", or "via @username" 
+* Distinguishing "edited" from "unedited" retweets is a step in the right direction
+* Currently PyMetrify marks "via @username" as a RT but there's a semantic problem -- this may be a RT or a citation to a website, depending on the sending app:
+> (Tweetbot for iOS) Woohooo! Romney will have Ahmadinejad indicted for genocide! YES (via @HeyTammyBruce) BALLS! Love it!
+> (Tweet Button) Romney education policies were 'inconsequential' http://t.co/Yhw2SHQG via @thinkprogress #debate
+> (web) If we get Romney in office for 4yrs, then we will have to put up with the same things we did when Bush was in office. (via @JaYiZmEe )
+> (Nimbuzz Mobile) See the president on CNN rn? Obama? Going to see him in person tomorrow omfg. (via @BiebersDuckie)
+
 ## Known issues
 
 [ ] The report() function is very inefficient and not appropriate for large collections. 
+[ ] How should we handle "orphaned" usernames who do not have an id_str?
 
 > "Premature optimization is the root of all evil" -- Donald Knuth, 1974
 
