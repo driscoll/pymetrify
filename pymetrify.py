@@ -4,7 +4,10 @@ pymetrify.py
 
 v.0.1
 
-PyMetrify is a tool for researchers who are handling small- to medium-sized collections of tweets in Activity Streams format. Inspired by Axel Bruns' metrify.awk, the Metrifier class generates common descriptive statistics and the report() function produces a nice, human-readable report in CSV. 
+PyMetrify is a tool for researchers who are handling small- to medium-sized
+collections of tweets in Activity Streams format. Inspired by Axel Bruns'
+metrify.awk, the Metrifier class generates common descriptive statistics
+and the report() function produces a nice, human-readable report in CSV.
 
 Copyright, Kevin Driscoll, 2013
 
@@ -38,11 +41,13 @@ import sys
 
 ISOFORMAT = '%Y-%m-%dT%H:%M:%S.000Z'
 SEPARATOR = u','
-VERBOSE = True 
+VERBOSE = True
+
 
 #
 # Helper functions
 #
+
 
 def debug(s):
     """Write s to stderr if the verbose flag is set.
@@ -50,20 +55,23 @@ def debug(s):
     if VERBOSE:
         sys.stderr.write(s)
 
+
 def from_postedTime_slow(postedTime):
     """Convert date an ISO formatted strings to Python datetime objects
     """
     return datetime.datetime.strptime(postedTime, ISOFORMAT)
 
+
 def from_postedTime(postedTime):
     """Convert date an ISO formatted strings to Python datetime objects
     """
     return datetime.datetime(int(postedTime[:4]),
-                                int(postedTime[5:7]),
-                                int(postedTime[8:10]),
-                                int(postedTime[11:13]),
-                                int(postedTime[14:16]),
-                                int(postedTime[17:19]))
+                             int(postedTime[5:7]),
+                             int(postedTime[8:10]),
+                             int(postedTime[11:13]),
+                             int(postedTime[14:16]),
+                             int(postedTime[17:19]))
+
 
 def ratio(n, m):
     """Return ratio of n:m as a float, returns -1 if m == 0
@@ -74,32 +82,36 @@ def ratio(n, m):
         return -1
     return (n / float(m))
 
+
 def percent(n, m):
     """Return n percent of m as a float, returns -100 if m == 0
     """
     return (100.0 * ratio(n, m))
 
+
 #
 # Main classes
 #
+
 
 class Metrifier:
 
     re_mention = re.compile(r'@([A-Za-z0-9_]+)')
     re_retweet = re.compile(r'(\"@|RT @|MT @|via @)([A-Za-z0-9_]+)')
+    re_via = re.compile(r'via @[a-z0-9_]*$')
 
     def __init__(self):
         # These default values may seem counterintuitive but
         # After two tweets are "eaten", they will make more sense
         self.timebounds = {
-            u'first' : datetime.datetime.now(), 
-            u'last' : datetime.datetime(2006, 3, 21) # Twitter founded
+            u'first': datetime.datetime.now(),
+            u'last': datetime.datetime(2006, 3, 21)  # Twitter founded
         }
-        self.tweet = {} 
+        self.tweet = {}
         self.frequency = Counter()
         self.user = {}
-        self.user_tweet = defaultdict(list) 
-        self.url = Counter() 
+        self.user_tweet = defaultdict(list)
+        self.url = Counter()
         self.hashtag = Counter()
         self.username = {}
         self.activity = []
@@ -115,47 +127,52 @@ class Metrifier:
             for mention in parsed:
                 if not (mention.start(1)-1) in starting_indices:
                     username = mention.group(1)
-                    mentions.append({
-                                u'id_str' : self.lookup_user_id_str(username),
-                                u'indices' : [mention.start(1)-1, mention.end(1)],
-                                u'screen_name' : username
-                    })
+                    u = {
+                        u'id_str': self.lookup_user_id_str(username),
+                        u'indices': [mention.start(1)-1, mention.end(1)],
+                        u'screen_name': username
+                        }
+                    mentions.append(u)
         return mentions
 
     def parse_urls(self, tweet):
         urls = tweet.get('twitter_entities', {}).get('urls', [])
-        # TODO These URLs often need to be lengthened further 
+        # TODO These URLs often need to be lengthened further
         return [u[u'expanded_url'] for u in urls]
 
     def parse_hashtags(self, tweet):
         hashtags = tweet.get('twitter_entities', {}).get('hashtags', [])
         return [ht[u'text'].lower() for ht in hashtags]
-            
+
     def parse_retweet(self, tweet):
         rt = {}
         if tweet.get(u'verb', u'') == 'share':
             rt = {
-                u'edited' : False,
-                u'retweeted_author_id_str' : tweet.get('object', {}).get('actor', {}).get('id_str', u''),
-                u'retweeted_author_username' : tweet.get('object', {}).get('actor', {}).get('preferredUsername', u'')
+                u'edited': False,
+                u'retweeted_author_id_str': tweet.get('object', {})
+                                                 .get('actor', {})
+                                                 .get('id_str', u''),
+                u'retweeted_author_username': tweet.get('object', {})
+                                                   .get('actor', {})
+                                                   .get('preferredUsername', u'')
             }
         else:
             m = self.re_retweet.search(tweet.get(u'body', ''))
             if m:
                 retweeted_author_username = m.group(2)
                 rt = {
-                    u'edited' : False,
-                    u'retweeted_author_username' : retweeted_author_username,
-                    u'retweeted_author_id_str' : self.lookup_user_id_str(retweeted_author_username)
+                    u'edited': False,
+                    u'retweeted_author_username': retweeted_author_username,
+                    u'retweeted_author_id_str': self.lookup_user_id_str(retweeted_author_username)
                 }
-        # If RT, is there add'l commentary? 
+        # If RT, is there add'l commentary?
         if rt:
             if tweet[u'verb'] == 'post':
                 if not tweet[u'body'][:2].lower() in ('rt', 'mt'):
                     if (tweet[u'body'][:2] == '"@'):
                         if not (tweet[u'body'][-1] == '"'):
                             rt[u'edited'] = True
-                    elif not re.search(r'via @[a-z0-9_]*$', tweet[u'body'].lower()):
+                    elif not self.re_via.search(tweet[u'body'].lower()):
                             rt[u'edited'] = True
         return rt
 
@@ -169,7 +186,8 @@ class Metrifier:
         if not end:
             end = datetime.datetime.now()
         condition = lambda tweet: tweet.get(key, False)
-        for tweet in itertools.ifilter(condition, (self.tweet[id_str] for id_str in sorted(self.tweet))):
+        iter_tweet_ids = (self.tweet[id_str] for id_str in sorted(self.tweet))
+        for tweet in itertools.ifilter(condition, iter_tweet_ids):
             if tweet[u'postedTimeObj'] > end:
                 break
             if tweet[u'postedTimeObj'] >= start:
@@ -177,7 +195,7 @@ class Metrifier:
         return
 
     def iterusers(self, key=u'id_str', reverse=True, include_inactive=False):
-        """Iterate over all the users observed in this collection. 
+        """Iterate over all the users observed in this collection.
             Only users that have key in their dict keys will be returned.
         """
         activity = []
@@ -189,10 +207,13 @@ class Metrifier:
                 activity.append((user[key], user[u'id_str']))
         for count, id_str in sorted(activity, reverse=reverse):
             yield self.user[id_str]
-        return 
+        return
 
     def group_users_by_activity(self, key=u'tweet', reverse=False, include_id_str=False):
-        for activity, cohort in itertools.groupby(self.iterusers(key=key, reverse=reverse), lambda u: u.get(key, 0)):
+        iter_users_by_activity = itertools.groupby(
+                                    self.iterusers(key=key, reverse=reverse),
+                                    lambda u: u.get(key, 0))
+        for activity, cohort in iter_users_by_activity:
             user = []
             user_count = 0
             for u in cohort:
@@ -203,11 +224,11 @@ class Metrifier:
             count = user_count * activity
             per_cent = percent(count, self.frequency.get(key, -1))
             cohort_metrics = {
-                u'key' : key,
-                u'cohort' : activity,
-                u'user_count' : user_count,
-                u'count' : count,
-                u'percent' : per_cent
+                u'key': key,
+                u'cohort': activity,
+                u'user_count': user_count,
+                u'count': count,
+                u'percent': per_cent
             }
             if include_id_str:
                 cohort_metrics[u'user'] = user
@@ -216,20 +237,25 @@ class Metrifier:
     def group_users_by_percentile(self, divisions=(100,)):
 
         if not self.frequency:
-            raise ValueError, "This self is hungry and has not eaten any tweets."
+            raise ValueError("I am hungry. Feed me tweets.")
 
         # Percentile refers to a list of users sorted from most active to least
         if sum(divisions) > 100:
-            raise ValueError, "Second argument must be a sequence of integers that sum to less than or equal to 100"
+            raise ValueError("Second argument must be a seq of ints <= 100")
         elif sum(divisions) < 100:
             divisions += (100 - sum(divisions),)
 
+        tweet_count = self.frequency.get(u'tweet')
+
+        def calc_boundary(percentage):
+            return int(math.ceil(percentage/100.0 * tweet_count))
+
         divisions = sorted(divisions, reverse=True)
         n = 0
-        cohort = Counter() 
+        cohort = Counter()
         cohort[u'user'] = []
         p = 0
-        boundary = int(math.ceil(divisions[p]/100.0 * self.frequency[u'tweet']))
+        boundary = calc_boundary(divisions[p])
         for group in self.group_users_by_activity(include_id_str=True):
             n += group[u'count']
             cohort[u'activity'] = group.pop('cohort')
@@ -243,11 +269,12 @@ class Metrifier:
                 for author_id_str in cohort[u'user']:
                     tweets.extend(self.user_tweet[author_id_str])
                 yield divisions[p], cohort, tweets
-                n = 0 
-                cohort = Counter() 
+                n = 0
+                cohort = Counter()
                 cohort[u'user'] = []
                 p += 1
-                boundary = int(math.ceil(divisions[p]/100.0 * self.frequency[u'tweet']))
+                boundary = calc_boundary(divisions[p])
+
         # Sometimes we don't reach the last percentile, so we will combine them
         remaining = reduce(operator.add, divisions[p:])
         tweets = []
@@ -262,14 +289,15 @@ class Metrifier:
         if id_str in self.tweet:
             return False
 
-        # Add this tweet to the pile 
-        self.tweet[id_str] = dict(tweet) 
+        # Add this tweet to the pile
+        self.tweet[id_str] = dict(tweet)
         self.frequency[u'tweet'] += 1
 
-        # Evaluate the date and time that this tweet was sent 
-        postedTimeObj = tweet.get(u'postedTimeObj', from_postedTime(tweet[u'postedTime']))
+        # Evaluate the date and time that this tweet was sent
+        postedTimeObj = tweet.get(u'postedTimeObj',
+                                  from_postedTime(tweet[u'postedTime']))
         self.tweet[id_str][u'postedTimeObj'] = postedTimeObj
-    
+
         # Test the time bounds
         if postedTimeObj < self.timebounds[u'first']:
             self.timebounds[u'first'] = postedTimeObj
@@ -295,22 +323,23 @@ class Metrifier:
             self.tweet[id_str][u'is_mention'] = True
             for mention in mentions:
                 # Placing the following line inside the loop means
-                # that we are counting individual @s, 
+                # that we are counting individual @s,
                 # not just tweets containing >= 1 @s
                 self.user[author_id_str][u'outbound_mention'] += 1
 
+                mention_id_str = mention[u'id_str']
                 mention_screen_name = mention[u'screen_name'].lower()
-                
+
                 self.username[mention_screen_name] = mention[u'id_str']
-                if not mention[u'id_str'] in self.user:
-                    self.user[mention[u'id_str']] = Counter()
-                    self.user[mention[u'id_str']][u'id_str'] = mention[u'id_str']
-                    self.user[mention[u'id_str']][u'username'] = mention_screen_name
-                self.user[mention[u'id_str']][u'inbound_mention'] += 1
+                if not mention_id_str in self.user:
+                    self.user[mention_id_str] = Counter()
+                    self.user[mention_id_str][u'id_str'] = mention_id_str
+                    self.user[mention_id_str][u'username'] = mention_screen_name
+                self.user[mention_id_str][u'inbound_mention'] += 1
 
                 # Is it an @-reply (not visible to all followers)?
                 # (aka, does this mention occur at position 0 in the body?)
-                if mention[u'indices'][0] == 0: 
+                if mention[u'indices'][0] == 0:
                     self.frequency[u'is_reply'] += 1
                     self.tweet[id_str][u'is_reply'] = True
                     self.user[author_id_str][u'outbound_replies'] += 1
@@ -322,28 +351,29 @@ class Metrifier:
             self.frequency[u'is_retweet'] += 1
             self.tweet[id_str][u'is_retweet'] = True
             self.user[author_id_str][u'outbound_retweets'] += 1
+            rt_retweeted_author_id_str = rt[u'retweeted_author_id_str']
             retweeted_author_username = rt[u'retweeted_author_username'].lower()
-            self.username[retweeted_author_username] = rt[u'retweeted_author_id_str'] 
-            if not rt[u'retweeted_author_id_str'] in self.user:
-                self.user[rt[u'retweeted_author_id_str']] = Counter()
-                self.user[rt[u'retweeted_author_id_str']][u'id_str'] = rt[u'retweeted_author_id_str']
-                self.user[rt[u'retweeted_author_id_str']][u'username'] = retweeted_author_username
-            self.user[rt[u'retweeted_author_id_str']][u'inbound_retweets'] += 1
+            self.username[retweeted_author_username] = rt[u'retweeted_author_id_str']
+            if not rt_retweeted_author_id_str in self.user:
+                self.user[rt_retweeted_author_id_str] = Counter()
+                self.user[rt_retweeted_author_id_str][u'id_str'] = rt_retweeted_author_id_str
+                self.user[rt_retweeted_author_id_str][u'username'] = retweeted_author_username
+            self.user[rt_retweeted_author_id_str][u'inbound_retweets'] += 1
             # Is it an "edited" or "unedited" retweet?
             if rt[u'edited']:
                 self.frequency[u'is_edited_retweet'] += 1
                 self.tweet[id_str][u'is_edited_retweet'] = True
                 self.user[author_id_str][u'outbound_edited_retweets'] += 1
-                self.user[rt[u'retweeted_author_id_str']][u'inbound_edited_retweets'] += 1
+                self.user[rt_retweeted_author_id_str][u'inbound_edited_retweets'] += 1
             else:
                 self.frequency[u'is_unedited_retweet'] += 1
                 self.tweet[id_str][u'is_unedited_retweet'] = True
                 self.user[author_id_str][u'outbound_unedited_retweets'] += 1
-                self.user[rt[u'retweeted_author_id_str']][u'inbound_unedited_retweets'] += 1
+                self.user[rt_retweeted_author_id_str][u'inbound_unedited_retweets'] += 1
         else:
             self.frequency[u'is_original'] += 1
             self.tweet[id_str][u'is_original'] = True
-            self.user[author_id_str][u'is_original'] +=1
+            self.user[author_id_str][u'is_original'] += 1
 
         # URLs?
         urls = self.parse_urls(tweet)
@@ -363,44 +393,44 @@ class Metrifier:
                 self.user[author_id_str][u'has_hashtag'] += 1
                 self.hashtag[hashtag] += 1
 
-        return True            
+        return True
 
-##################################################################
+
 #
 # OUTPUT functions
 #
-#
+
 
 def report(metrifier, period='hour', percentiles=(100,), includeusers=False, separator=SEPARATOR):
     """ Produce output in the style of metrify.awk by Mapping Online Publics
         metrifier: Metrifier() object that has already ingested tweets
         period: a time period with which to group tweets
         percentiles: a sequence of percentiles used to group users by activity (1, 9, 90)
-        includeusers: option to skipping calculating per-user stats 
+        includeusers: option to skipping calculating per-user stats
         separator: field separator character
 
     """
-    
-    # 
-    # Prepare
-    # 
-    
-    if not percentiles:
-        division = (100,)
 
-    user_percentiles = [] 
+    #
+    # Prepare
+    #
+
+    if not percentiles:
+        percentiles = (100,)
+
+    user_percentiles = []
     for percentile, cohort, tweets in sorted(metrifier.group_users_by_percentile(percentiles)):
         user_percentiles.append((percentile, cohort, tweets))
     user_percentiles.reverse()
 
     #
-    # Time period breakdown 
+    # Time period breakdown
     #
 
     sys.stdout.write(SEPARATOR.join(report_period_header(metrifier, user_percentiles)))
     sys.stdout.write('\n')
     if period:
-        # We can skip calculating multiple periods 
+        # We can skip calculating multiple periods
         # if the total collection spans less than 1 period.
         delta = metrifier.timebounds['last'] - metrifier.timebounds['first']
         if period == 'second':
@@ -418,12 +448,12 @@ def report(metrifier, period='hour', percentiles=(100,), includeusers=False, sep
         if abs(delta.total_seconds()) > p:
 
             periods = {
-                'year' : 1,
-                'month' : 2,
-                'day' : 3,
-                'hour' : 4,
-                'minute' : 5,
-                'second' : 6
+                'year': 1,
+                'month': 2,
+                'day': 3,
+                'hour': 4,
+                'minute': 5,
+                'second': 6
             }
 
             def grouper(tweet):
@@ -433,7 +463,7 @@ def report(metrifier, period='hour', percentiles=(100,), includeusers=False, sep
                 # datetime requires at least (year, month, day)
                 while len(key) < 3:
                     key += (1,)
-                subset =  Metrifier()
+                subset = Metrifier()
                 # Here's where we use the actual tweet objects
                 for tweet in group:
                     subset.eat(tweet)
@@ -447,7 +477,7 @@ def report(metrifier, period='hour', percentiles=(100,), includeusers=False, sep
 
 
     #
-    # Percentile breakdown 
+    # Percentile breakdown
     #
     sys.stdout.write(SEPARATOR.join(report_percentile_header()))
     sys.stdout.write('\n')
@@ -460,8 +490,8 @@ def report(metrifier, period='hour', percentiles=(100,), includeusers=False, sep
     sys.stdout.write('\n\n')
     sys.stdout.flush()
 
-    # 
-    # Individual user statistics 
+    #
+    # Individual user statistics
     #
 
     if includeusers:
@@ -475,40 +505,40 @@ def report(metrifier, period='hour', percentiles=(100,), includeusers=False, sep
 
 def report_user_header():
     return [
-            u'user',
-            u'id_str',
-            u'percentile',
-            u'tweets'
-            "original tweets",
-            "% original",
-            "outbound @-mentions",
-            "% outbound @-mentions",
-            "outbound @-replies",
-            "% outbound @-replies",
-            "outbound retweets",
-            "% outbound retweets",
-            "outbound unedited retweets",
-            "% outbound unedited retweets",
-            "outbound edited retweets",
-            "% outbound edited retweets",
-            "tweets with URLs",
-            "% tweets with URLs",
-            "tweets with >= 1 hashtags",
-            "% tweets with >= 1 hashtags",
-            "inbound @-mentions",
-            "inbound @-mentions:outbound tweets",
-            "inbound @-replies",
-            "% of inbound mentions are replies",
-            "inbound @-replies:outbound tweets",
-            "inbound retweets",
-            "inbound retweets:outbound tweets",
-            "inbound unedited retweets",
-            "% inbound unedited retweets",
-            "inbound unedited retweets:outbound tweets",
-            "inbound edited retweets",
-            "% inbound edited retweets",
-            "inbound edited retweets:outbound tweets"
-            ]
+        u'user',
+        u'id_str',
+        u'percentile',
+        u'tweets'
+        "original tweets",
+        "% original",
+        "outbound @-mentions",
+        "% outbound @-mentions",
+        "outbound @-replies",
+        "% outbound @-replies",
+        "outbound retweets",
+        "% outbound retweets",
+        "outbound unedited retweets",
+        "% outbound unedited retweets",
+        "outbound edited retweets",
+        "% outbound edited retweets",
+        "tweets with URLs",
+        "% tweets with URLs",
+        "tweets with >= 1 hashtags",
+        "% tweets with >= 1 hashtags",
+        "inbound @-mentions",
+        "inbound @-mentions:outbound tweets",
+        "inbound @-replies",
+        "% of inbound mentions are replies",
+        "inbound @-replies:outbound tweets",
+        "inbound retweets",
+        "inbound retweets:outbound tweets",
+        "inbound unedited retweets",
+        "% inbound unedited retweets",
+        "inbound unedited retweets:outbound tweets",
+        "inbound edited retweets",
+        "% inbound edited retweets",
+        "inbound edited retweets:outbound tweets"
+        ]
 
 def iter_report_user_rows(metrifier, percentiles):
     for percentile, cohort, tweet in reversed(percentiles):
@@ -564,6 +594,7 @@ def iter_report_user_rows(metrifier, percentiles):
                 ]
             yield row
 
+
 def report_percentile_row(metrifier, label, total_tweets):
     tweets = metrifier.frequency.get(u'tweet', 0)
     original = metrifier.frequency.get(u'is_original', 0)
@@ -576,7 +607,7 @@ def report_percentile_row(metrifier, label, total_tweets):
     has_hashtag = metrifier.frequency.get(u'has_hashtag', 0)
     return [
         label,
-        tweets, 
+        tweets,
         percent(tweets, total_tweets),
         original,
         ratio(original, tweets),
@@ -596,10 +627,12 @@ def report_percentile_row(metrifier, label, total_tweets):
         ratio(has_hashtag, tweets)
     ]
 
+
 def report_100_percent_row(metrifier):
     label = u'All {0} users'.format(metrifier.frequency[u'author'])
     total_tweets = metrifier.frequency.get(u'tweet', 0)
     return report_percentile_row(metrifier, label, total_tweets)
+
 
 def iter_report_percentile_rows(metrifier, percentiles):
     lower_bound = 0
@@ -609,14 +642,15 @@ def iter_report_percentile_rows(metrifier, percentiles):
         for tweet_id_str in tweets:
             subset.eat(metrifier.tweet[tweet_id_str])
         label = u'users {0}% ({1} < outbound tweets <= {2}; {3} of {4} users)'.format(
-                                                                        percentile, 
-                                                                        lower_bound, 
+                                                                        percentile,
+                                                                        lower_bound,
                                                                         cohort[u'activity'],
                                                                         cohort[u'user_count'],
                                                                         len(metrifier.user)
                                                                        )
         lower_bound = cohort[u'activity']
         yield report_percentile_row(subset, label, total_tweets)
+
 
 def report_percentile_header():
     row = [
@@ -642,8 +676,9 @@ def report_percentile_header():
     ]
     return row
 
+
 def report_period_header(metrifier, percentiles):
-    """Returns a sequence of strings corresponding to the column headers 
+    """Returns a sequence of strings corresponding to the column headers
         at the top of the default output from metrify.awk"""
     row = [
         u'period',
@@ -689,7 +724,7 @@ def report_period_row(metrifier, percentiles, label=''):
         of the default output from metrify.awk"""
 
     if not metrifier.frequency:
-        raise ValueError, "This metrifier has not eaten any tweets."
+        raise ValueError("This metrifier has not eaten any tweets.")
 
     row = [label]
 
@@ -722,7 +757,7 @@ def report_period_row(metrifier, percentiles, label=''):
 
     # Ratio of @-replies (as opposed to mentions) to users
     row.append(ratio(metrifier.frequency[u'is_reply'], authors))
-    
+
     # Ratio of URLs to users
     row.append(ratio(metrifier.frequency[u'has_url'], authors))
 
@@ -748,7 +783,7 @@ def report_period_row(metrifier, percentiles, label=''):
     # Edited RTs
     rt_edited = metrifier.frequency[u'is_edited_retweet']
     row.append(rt_edited)
-    
+
     # Unique URLs
     urls = len(metrifier.url)
     row.append(urls)
@@ -775,7 +810,7 @@ def report_period_row(metrifier, percentiles, label=''):
 
         # number of current users _% (_ < tweets <= _)
         row.append(cohort[u'user_count'])
-        
+
         # % of current users _% (_ < tweets <= _)
         row.append(percent(cohort[u'user_count'], authors))
 
@@ -796,7 +831,7 @@ if __name__ == "__main__":
             if not sum(percentiles) <= 100:
                 raise argparse.ArgumentError(self, 'The sum of the percentiles must be less than 100.')
             setattr(namespace, self.dest, percentiles)
-   
+
     parser = argparse.ArgumentParser()
     parser.add_argument('-p', '--percentiles', help="Report user activity metrics by percentiles, e.g. 90,9,1 (Note: these must sum to less than 100)", action=PercentilesAction)
     parser.add_argument('-t', '--timeperiod', help="Report tweet metrics by time period", choices=['year', 'month', 'day', 'hour', 'minute', 'second'], type=str)
@@ -806,7 +841,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     VERBOSE = args.verbose
-    
+
     metrifier = Metrifier()
 
     for line in args.INPUT:
@@ -814,8 +849,3 @@ if __name__ == "__main__":
         metrifier.eat(tweet)
 
     report(metrifier, args.timeperiod, args.percentiles, args.includeusers)
-
-
-   
-
-
