@@ -57,21 +57,21 @@ $ python pymetrify.py tweets.json > output.csv
 
 To report metrics for specific slices of time, __-t__ or __--timeperiod__ followed by a unit of time (second, minute, hour, day, week, month, year):
 ```bash
-$ python -t hour my_activity_streams_data.json > output.csv
+$ python pymetrify.py -t hour my_activity_streams_data.json > output.csv
 ```
 
 #### Group users by activity
 
 To divide users into subgroups based on the volume of their output, use __-p__ or __--percentiles__ followed by a comma-separated list of integers corresponding to the percentiles: 
 ```bash
-$ python -p 1,9,90 my_activity_streams_data.json > output.csv
+$ python pymetrify.py -p 1,9,90 my_activity_streams_data.json > output.csv
 ```
 
 #### Individual user statistics
 
 To output individual user metrics, use __-u__ or __--includeusers__: 
 ```bash
-$ python -u my_activity_streams_data.json > output.csv
+$ python pymetrify.py -u my_activity_streams_data.json > output.csv
 ```
 
 #### Produce a metrify.awk-like report
