@@ -108,6 +108,7 @@ class Metrifier:
             u'last': datetime.datetime(2006, 3, 21)  # Twitter founded
         }
         self.tweet = {}
+        self.tweet_id = []
         self.frequency = Counter()
         self.user = {}
         self.user_tweet = defaultdict(list)
@@ -287,16 +288,21 @@ class Metrifier:
 
         # id_str is our unique key
         id_str = tweet[u'id_str']
-        if id_str in self.tweet:
+        # Reject duplicates
+        if id_str in self.tweet_id:
             return False
 
         # Add this tweet to the pile
-        self.tweet[id_str] = dict(tweet)
+        # self.tweet[id_str] = dict(tweet)
+        self.tweet[id_str] = {u'id_str': id_str}
+        self.tweet_id.append(id_str)
         self.frequency[u'tweet'] += 1
 
         # Evaluate the date and time that this tweet was sent
-        postedTimeObj = tweet.get(u'postedTimeObj',
-                                  from_postedTime(tweet[u'postedTime']))
+        if u'postedTimeObj' in tweet:
+            postedTimeObj = tweet.get(u'postedTimeObj')
+        else:
+            postedTimeObj = from_postedTime(tweet[u'postedTime'])
         self.tweet[id_str][u'postedTimeObj'] = postedTimeObj
 
         # Test the time bounds
