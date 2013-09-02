@@ -176,8 +176,9 @@ class Metrifier:
                             rt[u'edited'] = True
         return rt
 
-    def chronological(self):
-        for id_str in sorted(self.tweet):
+    def chronological(self, reverse=False):
+        """ Iterator yields tweets in chronological order """
+        for id_str in sorted(self.tweet, reverse=reverse):
             yield self.tweet[id_str]
 
     def itertweets(self, key=u'body', start=None, end=None):
