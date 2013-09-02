@@ -77,7 +77,7 @@ $ python -u my_activity_streams_data.json > output.csv
 #### Produce a metrify.awk-like report
 
 ```bash
-$ python -p 1,9,90 -t 'hour' -u tweets.json > output.csv
+$ python pymetrify.py -p 1,9,90 -t 'hour' -u tweets.json > output.csv
 ```
 ...is roughly equivalent to...
 ```bash
