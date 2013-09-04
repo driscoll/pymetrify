@@ -93,8 +93,7 @@ def percent(n, m):
 # Main classes
 #
 
-
-class Metrifier:
+class Metrifier(object):
 
     re_mention = re.compile(r'@([A-Za-z0-9_]+)')
     re_retweet = re.compile(r'(\"@|RT @|MT @|via @)([A-Za-z0-9_]+)')
@@ -110,15 +109,17 @@ class Metrifier:
         self.tweet = {}
         self.tweet_id = []
         self.frequency = Counter()
-        self.user = {}
+
+        self.user = defaultdict(Counter) 
         self.user_tweet = defaultdict(list)
+        self.user_name = {}
+        self.user_id = {}
+
         self.url = Counter()
         self.hashtag = Counter()
-        self.username = {}
-        self.activity = []
 
     def lookup_user_id_str(self, username):
-        return self.username.get(username.lower(), u'')
+        return self.user_id.get(username.lower(), u'')
 
     def parse_mentions(self, tweet):
         mentions = tweet.get('twitter_entities', {}).get('user_mentions', [])
@@ -289,13 +290,14 @@ class Metrifier:
         # id_str is our unique key
         id_str = tweet[u'id_str']
         # Reject duplicates
-        if id_str in self.tweet_id:
-            return False
+        # TODO skipping this here bc it is slow
+        #if id_str in self.tweet_id:
+        #    return False
 
         # Add this tweet to the pile
         # self.tweet[id_str] = dict(tweet)
         self.tweet[id_str] = {u'id_str': id_str}
-        self.tweet_id.append(id_str)
+        # self.tweet_id.append(id_str)
         self.frequency[u'tweet'] += 1
 
         # Evaluate the date and time that this tweet was sent
@@ -311,15 +313,12 @@ class Metrifier:
         elif postedTimeObj > self.timebounds[u'last']:
             self.timebounds[u'last'] = postedTimeObj
 
-        # Increment tweet count for this author
+        # User data
         author_id_str = tweet.get(u'actor', {}).get(u'id_str', '-1')
-        author_username = tweet.get(u'actor', {}).get(u'preferredUsername', u'').lower()
-        self.username[author_username] = author_id_str
-        if not author_id_str in self.user:
-            self.user[author_id_str] = Counter()
-            self.user[author_id_str][u'id_str'] = author_id_str
-            self.user[author_id_str][u'username'] = author_username
-            self.frequency[u'author'] += 1
+        author_user_name = tweet.get(u'actor', {}).get(u'preferredUsername', u'').lower()
+        self.user_name[author_user_name] = author_id_str
+        self.user_id[author_id_str] = author_user_name
+        self.frequency[u'author'] += 1
         self.user[author_id_str][u'tweet'] += 1
         self.user_tweet[author_id_str].append(id_str)
 
@@ -335,13 +334,9 @@ class Metrifier:
                 self.user[author_id_str][u'outbound_mention'] += 1
 
                 mention_id_str = mention[u'id_str']
-                mention_screen_name = mention[u'screen_name'].lower()
-
-                self.username[mention_screen_name] = mention[u'id_str']
-                if not mention_id_str in self.user:
-                    self.user[mention_id_str] = Counter()
-                    self.user[mention_id_str][u'id_str'] = mention_id_str
-                    self.user[mention_id_str][u'username'] = mention_screen_name
+                mention_user_name = mention[u'screen_name'].lower()
+                self.user_id[mention_user_name] = mention_id_str
+                self.user_name[mention_id_str] = mention_user_name
                 self.user[mention_id_str][u'inbound_mention'] += 1
 
                 # Is it an @-reply (not visible to all followers)?
@@ -358,25 +353,22 @@ class Metrifier:
             self.frequency[u'is_retweet'] += 1
             self.tweet[id_str][u'is_retweet'] = True
             self.user[author_id_str][u'outbound_retweets'] += 1
-            rt_retweeted_author_id_str = rt[u'retweeted_author_id_str']
-            retweeted_author_username = rt[u'retweeted_author_username'].lower()
-            self.username[retweeted_author_username] = rt[u'retweeted_author_id_str']
-            if not rt_retweeted_author_id_str in self.user:
-                self.user[rt_retweeted_author_id_str] = Counter()
-                self.user[rt_retweeted_author_id_str][u'id_str'] = rt_retweeted_author_id_str
-                self.user[rt_retweeted_author_id_str][u'username'] = retweeted_author_username
-            self.user[rt_retweeted_author_id_str][u'inbound_retweets'] += 1
+            retweeted_author_id_str = rt[u'retweeted_author_id_str']
+            retweeted_author_user_name = rt[u'retweeted_author_username'].lower()
+            self.user_name[retweeted_author_user_id_str] = retweeted_author_user_name
+            self.user_id[retweeted_author_user_name] = retweeted_author_id_str
+            self.user[tweeted_author_id_str][u'inbound_retweets'] += 1
             # Is it an "edited" or "unedited" retweet?
             if rt[u'edited']:
                 self.frequency[u'is_edited_retweet'] += 1
                 self.tweet[id_str][u'is_edited_retweet'] = True
                 self.user[author_id_str][u'outbound_edited_retweets'] += 1
-                self.user[rt_retweeted_author_id_str][u'inbound_edited_retweets'] += 1
+                self.user[tweeted_author_id_str][u'inbound_edited_retweets'] += 1
             else:
                 self.frequency[u'is_unedited_retweet'] += 1
                 self.tweet[id_str][u'is_unedited_retweet'] = True
                 self.user[author_id_str][u'outbound_unedited_retweets'] += 1
-                self.user[rt_retweeted_author_id_str][u'inbound_unedited_retweets'] += 1
+                self.user[tweeted_author_id_str][u'inbound_unedited_retweets'] += 1
         else:
             self.frequency[u'is_original'] += 1
             self.tweet[id_str][u'is_original'] = True
@@ -401,6 +393,104 @@ class Metrifier:
                 self.hashtag[hashtag] += 1
 
         return True
+
+
+class MultiMetrifier(Metrifier):
+
+    def __init__(self, processors=2):
+        Metrifier.__init__(self)
+
+    def get_postedTimeObj(self, tweet):
+        if u'postedTimeObj' in tweet:
+            return tweet.get(u'postedTimeObj')
+        else:
+            return from_postedTime(tweet[u'postedTime'])
+
+    def earlier(self, dt_a, dt_b):
+        if dt_a < dt_b:
+            return dt_a
+        return dt_b
+
+    def later(self, dt_a, dt_b):
+        if dt_a < dt_b:
+            return dt_b
+        return dt_a
+
+    def combine_aggregate(self, a, b):
+        return (a[0] + b[0],
+        self.earlier(a[1], b[1]),
+        self.later(a[2], b[2]),
+        a[3] + b[3],
+        a[4] + b[4],
+        a[5] + b[5],
+        a[6] + b[6],
+        a[7] + b[7],
+        a[8] + b[8],
+        a[9] + b[9],
+        a[10] + b[10])
+
+    def user_stats(self, tweet):
+        """Transform tweet in list of tuples of user stats
+        """
+        return () 
+
+    def tweet_stats(self, tweet):
+        """Transform tweet into a tuple of true/false values
+            For use in map-reduce situations
+        """
+        count = 1
+
+        postedTimeObj = self.get_postedTimeObj(tweet)
+
+        mentions = self.parse_mentions(tweet)
+        is_mention = 0
+        is_reply = 0
+        if mentions:
+            is_mention = 1
+            for mention in mentions:
+                if mention[u'indices'][0] == 0:
+                    is_reply = 1 
+                    break
+
+        rt = self.parse_retweet(tweet)
+        if rt:
+            is_original = 0
+            is_retweet = 1
+            if rt[u'edited']:
+                is_edited_retweet = 1
+                is_unedited_retweet = 0
+            else:
+                is_edited_retweet = 0
+                is_unedited_retweet = 1
+        else:
+            is_original = 1
+            is_retweet = 0
+            is_edited_retweet = 0
+            is_unedited_retweet = 0
+
+        urls = self.parse_urls(tweet)
+        if urls:
+            has_url = 1
+        else:
+            has_url = 0
+
+        hashtags = self.parse_hashtags(tweet)
+        if hashtags:
+            has_hashtag = 1
+        else:
+            has_hashtag = 0
+
+        return (count,
+                postedTimeObj,
+                postedTimeObj,
+                is_mention,
+                is_reply,
+                is_original,
+                is_retweet,
+                is_edited_retweet,
+                is_unedited_retweet,
+                has_url,
+                has_hashtag)
 
 
 #
