@@ -72,6 +72,15 @@ def from_postedTime(postedTime):
                              int(postedTime[14:16]),
                              int(postedTime[17:19]))
 
+def extract_user_id(s):
+    """ Return Twitter User ID found in s
+        Return None if no matches found
+    """
+    m = re.search(r':([0-9]*)$')                
+    if m:
+        return m.group(1)
+    else:
+        return None
 
 def ratio(n, m):
     """Return ratio of n:m as a float, returns -1 if m == 0
@@ -148,14 +157,13 @@ class Metrifier:
     def parse_retweet(self, tweet):
         rt = {}
         if tweet.get(u'verb', u'') == 'share':
+            retweeted_status = tweet.get('object', {})
+            retweeted_author = retweeted_status.get('actor', {})
+            retweeted_author_id_str = tweetutils.extract_user_id(retweeted_author.get('id', ''))
             rt = {
                 u'edited': False,
-                u'retweeted_author_id_str': tweet.get('object', {})
-                                                 .get('actor', {})
-                                                 .get('id_str', u''),
-                u'retweeted_author_username': tweet.get('object', {})
-                                                   .get('actor', {})
-                                                   .get('preferredUsername', u'')
+                u'retweeted_author_id_str': retweeted_author_id_str, 
+                u'retweeted_author_username': retweeted_author.get('preferredUsername', u'')
             }
         else:
             m = self.re_retweet.search(tweet.get(u'body', ''))
@@ -516,35 +524,35 @@ def report_user_header():
         u'id_str',
         u'percentile',
         u'tweets'
-        "original tweets",
-        "% original",
-        "outbound @-mentions",
-        "% outbound @-mentions",
-        "outbound @-replies",
-        "% outbound @-replies",
-        "outbound retweets",
-        "% outbound retweets",
-        "outbound unedited retweets",
-        "% outbound unedited retweets",
-        "outbound edited retweets",
-        "% outbound edited retweets",
-        "tweets with URLs",
-        "% tweets with URLs",
-        "tweets with >= 1 hashtags",
-        "% tweets with >= 1 hashtags",
-        "inbound @-mentions",
-        "inbound @-mentions:outbound tweets",
-        "inbound @-replies",
-        "% of inbound mentions are replies",
-        "inbound @-replies:outbound tweets",
-        "inbound retweets",
-        "inbound retweets:outbound tweets",
-        "inbound unedited retweets",
-        "% inbound unedited retweets",
-        "inbound unedited retweets:outbound tweets",
-        "inbound edited retweets",
-        "% inbound edited retweets",
-        "inbound edited retweets:outbound tweets"
+        u"original tweets",
+        u"% original",
+        u"outbound @-mentions",
+        u"% outbound @-mentions",
+        u"outbound @-replies",
+        u"% outbound @-replies",
+        u"outbound retweets",
+        u"% outbound retweets",
+        u"outbound unedited retweets",
+        u"% outbound unedited retweets",
+        u"outbound edited retweets",
+        u"% outbound edited retweets",
+        u"tweets with URLs",
+        u"% tweets with URLs",
+        u"tweets with >= 1 hashtags",
+        u"% tweets with >= 1 hashtags",
+        u"inbound @-mentions",
+        u"inbound @-mentions:outbound tweets",
+        u"inbound @-replies",
+        u"% of inbound mentions are replies",
+        u"inbound @-replies:outbound tweets",
+        u"inbound retweets",
+        u"inbound retweets:outbound tweets",
+        u"inbound unedited retweets",
+        u"% inbound unedited retweets",
+        u"inbound unedited retweets:outbound tweets",
+        u"inbound edited retweets",
+        u"% inbound edited retweets",
+        u"inbound edited retweets:outbound tweets"
         ]
 
 def iter_report_user_rows(metrifier, percentiles):
