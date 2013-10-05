@@ -76,7 +76,7 @@ def extract_user_id(s):
     """ Return Twitter User ID found in s
         Return None if no matches found
     """
-    m = re.search(r':([0-9]*)$')                
+    m = re.search(r':([0-9]*)$', s)                
     if m:
         return m.group(1)
     else:
@@ -159,7 +159,7 @@ class Metrifier:
         if tweet.get(u'verb', u'') == 'share':
             retweeted_status = tweet.get('object', {})
             retweeted_author = retweeted_status.get('actor', {})
-            retweeted_author_id_str = tweetutils.extract_user_id(retweeted_author.get('id', ''))
+            retweeted_author_id_str = extract_user_id(retweeted_author.get('id', ''))
             rt = {
                 u'edited': False,
                 u'retweeted_author_id_str': retweeted_author_id_str, 
@@ -295,7 +295,13 @@ class Metrifier:
     def eat(self, tweet):
 
         # id_str is our unique key
-        id_str = tweet[u'id_str']
+        if u'id_str' in tweet:
+            id_str = tweet[u'id_str']
+        elif u'id' in tweet:
+            id_str = tweet[u'id']
+        else:
+            return False
+
         # Reject duplicates
         # De-duping is too costly at scale
         #if id_str in self.tweet_id:
